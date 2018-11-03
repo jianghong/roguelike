@@ -88,11 +88,6 @@ fn main() {
 		}
 
 		if objects[PLAYER].alive && player_action == PlayerAction::TookTurn {
-			// for object in &objects {
-			// 	if (object as *const _) != (&objects[PLAYER] as *const _) {
-			// 		// println!("The {} growls!", object.name);
-			// 	}
-			// }
 			for id in 0..objects.len() {
 				if objects[id].ai.is_some() {
 					ai_take_turn(id, &map, &mut objects, &fov_map);
@@ -141,11 +136,47 @@ fn handle_keys(root: &mut Root, map: &Map, objects: &mut [Object]) -> PlayerActi
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+enum DeathCallback {
+	Player,
+	Monster
+}
+
+impl DeathCallback {
+	fn callback(self, object: &mut Object) {
+		use DeathCallback::*;
+		let callback: fn(&mut Object) = match self {
+			Player => player_death,
+			Monster => monster_death,
+		};
+		callback(object);
+	}
+}
+
+fn player_death(player: &mut Object) {
+	println!("You died!");
+
+	// transform player into a corpse char
+	player.char = '%';
+	player.color = colors::DARK_RED;
+}
+
+fn monster_death(monster: &mut Object) {
+	println!("{} is dead!", monster.name);
+	monster.char = '%';
+	monster.color = colors::DARK_RED;
+	monster.blocks = false;
+	monster.fighter = None;
+	monster.ai = None;
+	monster.name = format!("Remains of {}", monster.name);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Fighter {
 	max_hp: i32,
 	hp: i32,
 	defense: i32,
 	power: i32,
+	on_death: DeathCallback,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -203,6 +234,34 @@ impl Object {
 		let dx = other.x - self.x;
 		let dy = other.y - self.y;
 		((dx.pow(2) + dy.pow(2)) as f32).sqrt()
+	}
+
+	pub fn take_damage(&mut self, damage: i32) {
+		// apply damage if possible
+		if let Some(fighter) = self.fighter.as_mut() {
+			if damage > 0 {
+				fighter.hp -= damage;
+			}
+		}
+
+		// check for death, call the death function
+		if let Some(fighter) = self.fighter {
+			if fighter.hp <= 0 {
+				self.alive = false;
+				fighter.on_death.callback(self);
+			}
+		}
+	}
+
+	pub fn attack(&mut self, target: &mut Object) {
+		// simple formula for attack damage
+		let damage = self.fighter.map_or(0, |f| f.power) - target.fighter.map_or(0, |f| f.defense);
+		if damage > 0 {
+			println!("{} attacks {} for {} hp.", self.name, target.name, damage);
+			target.take_damage(damage);
+		} else {
+			println!("{} attacks {} but it has no effect!", self.name, target.name);
+		}
 	}
 }
 
@@ -308,6 +367,12 @@ fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &mu
 		}
 	}
 
+	// show player stats
+	if let Some(fighter) = objects[PLAYER].fighter {
+		root.print_ex(1, SCREEN_HEIGHT - 2, BackgroundFlag::None, TextAlignment::Left,
+			          format!("HP: {}/{} ", fighter.hp, fighter.max_hp));
+	}
+
 	// blit the contents of "con" to the root console and present it
     blit(con, (0, 0), (MAP_WIDTH, MAP_HEIGHT), root, (0, 0), 1.0, 1.0);
 }
@@ -410,7 +475,8 @@ fn player_move_or_attack(dx: i32, dy: i32, map: &Map, objects: &mut [Object]) {
 
 	match target_id {
 		Some(target_id) => {
-			println!("The {} laughs at your punt efforts to attack them!", objects[target_id].name);
+			let (player, target) = mut_two(PLAYER, target_id, objects);
+			player.attack(target);
 		}
 		None => {
 			move_by(PLAYER, dx, dy, map, objects);
@@ -426,6 +492,7 @@ fn create_player() -> Object {
 		hp: 30,
 		defense: 2,
 		power: 5,
+		on_death: DeathCallback::Player,
 	});
 	player
 }
@@ -438,6 +505,7 @@ fn create_monster(x: i32, y: i32) -> Object {
 			hp: 10,
 			defense: 0,
 			power: 3,
+			on_death: DeathCallback::Monster,
 		});
 		orc.ai = Some(Ai);
 		orc
@@ -448,6 +516,7 @@ fn create_monster(x: i32, y: i32) -> Object {
 			hp: 16,
 			defense: 1,
 			power: 4,
+			on_death: DeathCallback::Monster,
 		});
 		troll.ai = Some(Ai);
 		troll
@@ -480,7 +549,21 @@ fn ai_take_turn(monster_id: usize, map: &Map, objects: &mut [Object], fov_map: &
 			move_towards(monster_id, player_x, player_y, map, objects);
 		} else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
 			// close enough to attack if player is still alive
-			println!("The attack of the {} bounces off your shiny metal armor!", &objects[monster_id].name);
+			let (monster, player) = mut_two(monster_id, PLAYER, objects);
+			monster.attack(player);
 		}
+	}
+}
+
+// Mutably borrow two *separate* elements from the given slice
+// Panics when the indices are equal or out of bounds
+fn mut_two<T>(first_index: usize, second_index: usize, items: &mut [T]) -> (&mut T, &mut T) {
+	assert!(first_index != second_index);
+	let split_at_index = cmp::max(first_index, second_index);
+	let (first_slice, second_slice) = items.split_at_mut(split_at_index);
+	if first_index < second_index {
+		(&mut first_slice[first_index], &mut second_slice[0])
+	} else {
+		(&mut second_slice[0], &mut first_slice[second_index])
 	}
 }
