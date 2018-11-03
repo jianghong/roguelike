@@ -356,16 +356,7 @@ fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
 		let y = rand::thread_rng().gen_range(room.y1 +1, room.y2);
 
 		if !is_blocked(x, y, map, objects) {
-			// 80% chance of getting an orc
-			let mut monster = if rand::random::<f32>() < 0.8 {
-				// create an orc
-				Object::new(x, y, 'O', colors::DESATURATED_GREEN, "Orc", true)
-			} else {
-				// create a troll
-				Object::new(x, y, 'T', colors::DARKER_GREEN, "Troll", true)
-			};
-			monster.alive = true;
-
+			let monster = create_monster(x, y);
 			objects.push(monster);
 		}
 	}
@@ -426,4 +417,30 @@ fn create_player() -> Object {
 		power: 5,
 	});
 	player
+}
+
+fn create_monster(x: i32, y: i32) -> Object {
+	let mut monster = if rand::random::<f32>() < 0.8 {
+		let mut orc = Object::new(x, y, 'O', colors::DESATURATED_GREEN, "Orc", true);
+		orc.fighter = Some(Fighter {
+			max_hp: 10,
+			hp: 10,
+			defense: 0,
+			power: 3,
+		});
+		orc.ai = Some(Ai);
+		orc
+	} else {
+		let mut troll = Object::new(x, y, 'T', colors::DARKER_GREEN, "Troll", true);
+		troll.fighter = Some(Fighter {
+			max_hp: 16,
+			hp: 16,
+			defense: 1,
+			power: 4,
+		});
+		troll.ai = Some(Ai);
+		troll
+	};
+	monster.alive = true;
+	monster
 }
