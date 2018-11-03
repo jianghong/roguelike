@@ -361,13 +361,17 @@ fn render_all(root: &mut Root, con: &mut Offscreen, objects: &[Object], map: &mu
 
 	}
 	// draw all objects in list
-	for object in objects {
-		if fov_map.is_in_fov(object.x, object.y) {
-			object.draw(con);
-		}
+	let mut to_draw: Vec<_> = objects.iter()
+	  .filter(|o| { fov_map.is_in_fov(o.x, o.y) })
+	  .collect();
+	// sort so blocking objects come last and drawn on top of non blocking objects
+	to_draw.sort_by(|o1, o2| { o1.blocks.cmp(&o2.blocks) });
+	for object in &to_draw {
+		object.draw(con);
 	}
 
 	// show player stats
+	root.set_default_foreground(colors::WHITE);
 	if let Some(fighter) = objects[PLAYER].fighter {
 		root.print_ex(1, SCREEN_HEIGHT - 2, BackgroundFlag::None, TextAlignment::Left,
 			          format!("HP: {}/{} ", fighter.hp, fighter.max_hp));
@@ -467,10 +471,10 @@ fn player_move_or_attack(dx: i32, dy: i32, map: &Map, objects: &mut [Object]) {
 	let (x, y) = objects[PLAYER].pos();
 
 	let new_x = x + dx;
-	let new_y = y + dy;
+	let new_y = y + dy; 
 
 	let target_id = objects.iter().position(|object| {
-		object.pos() == (new_x, new_y)
+		object.fighter.is_some() && object.pos() == (new_x, new_y)
 	});
 
 	match target_id {
@@ -485,7 +489,7 @@ fn player_move_or_attack(dx: i32, dy: i32, map: &Map, objects: &mut [Object]) {
 }
 
 fn create_player() -> Object {
-	let mut player = Object::new(0, 0, '@', colors::WHITE, "Player", false);
+	let mut player = Object::new(0, 0, '@', colors::WHITE, "Player", true);
 	player.alive = true;	
 	player.fighter = Some(Fighter {
 		max_hp: 30,
