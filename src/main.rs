@@ -88,9 +88,14 @@ fn main() {
 		}
 
 		if objects[PLAYER].alive && player_action == PlayerAction::TookTurn {
-			for object in &objects {
-				if (object as *const _) != (&objects[PLAYER] as *const _) {
-					// println!("The {} growls!", object.name);
+			// for object in &objects {
+			// 	if (object as *const _) != (&objects[PLAYER] as *const _) {
+			// 		// println!("The {} growls!", object.name);
+			// 	}
+			// }
+			for id in 0..objects.len() {
+				if objects[id].ai.is_some() {
+					ai_take_turn(id, &map, &mut objects, &fov_map);
 				}
 			}
 		}
@@ -192,6 +197,12 @@ impl Object {
 	pub fn set_pos(&mut self, x: i32, y: i32) {
 		self.x = x;
 		self.y = y;
+	}
+
+	pub fn distance_to(&self, other: &Object) -> f32 {
+		let dx = other.x - self.x;
+		let dy = other.y - self.y;
+		((dx.pow(2) + dy.pow(2)) as f32).sqrt()
 	}
 }
 
@@ -443,4 +454,33 @@ fn create_monster(x: i32, y: i32) -> Object {
 	};
 	monster.alive = true;
 	monster
+}
+
+fn move_towards(id: usize, target_x: i32, target_y: i32, map: &Map, objects: &mut [Object]) {
+	// vector from this object to the target, and distance
+	let dx = target_x - objects[id].x;
+	let dy = target_y - objects[id].y;
+	let distance = ((dx.pow(2) + dy.pow(2)) as f32).sqrt();
+
+	//normalize it to length 1 (preserving direction), then round it and
+	// convert to integer so the movement is restricted to map grid
+	let dx = (dx as f32 / distance).round() as i32;
+	let dy = (dy as f32 / distance).round() as i32;
+	move_by(id, dx, dy, map, objects);
+}
+
+fn ai_take_turn(monster_id: usize, map: &Map, objects: &mut [Object], fov_map: &FovMap) {
+	// a basic monster takes its turn. If you can see it, it can see you
+	let (monster_x, monster_y) = objects[monster_id].pos();
+	let (player_x, player_y) = objects[PLAYER].pos();
+
+	if fov_map.is_in_fov(monster_x, monster_y) {
+		if objects[monster_id].distance_to(&objects[PLAYER]) >= 2.0 {
+			// move towards player if far away
+			move_towards(monster_id, player_x, player_y, map, objects);
+		} else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
+			// close enough to attack if player is still alive
+			println!("The attack of the {} bounces off your shiny metal armor!", &objects[monster_id].name);
+		}
+	}
 }
