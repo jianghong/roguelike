@@ -1,7 +1,13 @@
 extern crate tcod;
 extern crate rand;
+extern crate serde;
+#[macro_use] extern crate serde_derive;
+extern crate serde_json;
 
 use std::cmp;
+use std::io::{Read, Write};
+use std::fs::File;
+use std::error::Error;
 
 use tcod::console::*;
 use tcod::colors::{self, Color};
@@ -82,6 +88,7 @@ struct Tcod {
 	mouse: Mouse,
 }
 
+#[derive(Serialize, Deserialize)]
 struct Game {
 	map: Map,
 	log: Messages,
@@ -168,6 +175,7 @@ fn play_game(objects: &mut Vec<Object>, game: &mut Game, tcod: &mut Tcod) {
 		previous_player_position = objects[PLAYER].pos();
 		let player_action = handle_keys(key, tcod, game, objects);
 		if player_action == PlayerAction::Exit {
+			save_game(objects, game).unwrap();
 			break
 		}
 
@@ -245,7 +253,7 @@ fn handle_keys(key: Key, tcod: &mut Tcod, game: &mut Game, objects: &mut Vec<Obj
 	}
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 enum Item {
 	Heal,
 	Lightning,
@@ -263,7 +271,7 @@ fn pick_item_up(object_id: usize, objects: &mut Vec<Object>, game: &mut Game) {
 	}
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 enum DeathCallback {
 	Player,
 	Monster
@@ -297,7 +305,7 @@ fn monster_death(monster: &mut Object, game: &mut Game) {
 	monster.name = format!("Remains of {}", monster.name);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 struct Fighter {
 	max_hp: i32,
 	hp: i32,
@@ -306,13 +314,13 @@ struct Fighter {
 	on_death: DeathCallback,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum Ai {
 	Basic,
 	Confused { previous_ai: Box<Ai>, num_turns: i32 },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Object {
 	x: i32,
 	y: i32,
@@ -410,7 +418,7 @@ impl Object {
 	}
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct Tile {
 	blocked: bool,
 	block_sight: bool,
@@ -1110,10 +1118,44 @@ fn main_menu(tcod: &mut Tcod) {
 				let (mut objects, mut game) = new_game(tcod);
 				play_game(&mut objects, &mut game, tcod);
 			}
+			Some(1) => {
+				// load game
+				match load_game() {
+					Ok((mut objects, mut game)) => {
+						initialise_fov(&game.map, tcod);
+						play_game(&mut objects, &mut game, tcod);
+					}
+					Err(_e) => {
+						msgbox("\nNo saved game to load.\n", 24, &mut tcod.root);
+						continue;
+					}
+				}
+
+			}
 			Some(2) => {
 				break;
 			}
 			_ => {}
 		}
 	}
+}
+
+fn msgbox(text: &str, width: i32, root: &mut Root) {
+    let options: &[&str] = &[];
+    menu(text, options, width, root);
+}
+
+fn save_game(objects: &[Object], game: &Game) -> Result<(), Box<Error>> {
+	let save_data = serde_json::to_string(&(objects, game))?;
+	let mut file = File::create("savegame")?;
+	file.write_all(save_data.as_bytes())?;
+	Ok(())
+}
+
+fn load_game() -> Result<(Vec<Object>, Game), Box<Error>> {
+	let mut json_save_state = String::new();
+	let mut file = File::open("savegame")?;
+	file.read_to_string(&mut json_save_state)?;
+	let result = serde_json::from_str::<(Vec<Object>, Game)>(&json_save_state)?;
+	Ok(result)
 }
