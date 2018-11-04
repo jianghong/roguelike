@@ -97,6 +97,7 @@ fn main() {
 		.title("Rust/libtcod tutorial")
 		.init();
 	tcod::system::set_fps(LIMIT_FPS);
+
 	let mut tcod = Tcod {
 		root: root,
 		con: Offscreen::new(MAP_WIDTH, MAP_HEIGHT),
@@ -105,13 +106,14 @@ fn main() {
 		mouse: Default::default(),
 	};
 
-	// input setup
-	let mut key: Key = Default::default();
+	main_menu(&mut tcod);
+}
 
-	// player setup
+fn new_game(tcod: &mut Tcod) -> (Vec<Object> , Game) {
+	// create object representing the player
 	let player = create_player();
 
-	// game setup
+	// the list of objects with just the player
 	let mut objects = vec![player];
 	let (map, (x, y)) = make_map(&mut objects);
 	objects[PLAYER].set_pos(x, y);
@@ -120,37 +122,51 @@ fn main() {
 		log: vec![],
 		inventory: vec![],
 	};
+
+	initialise_fov(&game.map, tcod);
+
 	game.log.add("Welcome stranger! Be careful of spookies", colors::RED);	
 
+	(objects, game)
+}
+
+fn initialise_fov(map: &Map, tcod: &mut Tcod) {
 	// fov map setup
 	for y in 0..MAP_HEIGHT {
 		for x in 0..MAP_WIDTH {
 			tcod.fov.set(x, y,
-				        !game.map[x as usize][y as usize].block_sight,
-				        !game.map[x as usize][y as usize].blocked);
+				        !map[x as usize][y as usize].block_sight,
+				        !map[x as usize][y as usize].blocked);
 		}
 	}
 
-	// main game loop
+	// unexplored areas start black
+	tcod.con.clear();
+}
+
+fn play_game(objects: &mut Vec<Object>, game: &mut Game, tcod: &mut Tcod) {
 	let mut previous_player_position = (-1, -1);
+	let mut key: Key = Default::default();
+
 	while !tcod.root.window_closed() {
-		let fov_recompute = previous_player_position != (objects[PLAYER].x, objects[PLAYER].y);
 		match input::check_for_event(input::MOUSE | input::KEY_PRESS) {
 			Some((_, Event::Mouse(m))) => tcod.mouse = m,
 			Some((_, Event::Key(k))) => key = k,
 			_ => key = Default::default(),
 		}
-		render_all(&mut tcod, &mut game, &objects, fov_recompute);
+
+		let fov_recompute = previous_player_position != (objects[PLAYER].x, objects[PLAYER].y);
+		render_all(tcod, game, &objects, fov_recompute);
 
 		tcod.root.flush();
 
 		// erase objects in old location, before they move
-		for object in &objects {
+		for object in objects.iter_mut() {
 			object.clear(&mut tcod.con)
 		}
 
 		previous_player_position = objects[PLAYER].pos();
-		let player_action = handle_keys(key, &mut tcod, &mut game, &mut objects);
+		let player_action = handle_keys(key, tcod, game, objects);
 		if player_action == PlayerAction::Exit {
 			break
 		}
@@ -158,14 +174,12 @@ fn main() {
 		if objects[PLAYER].alive && player_action == PlayerAction::TookTurn {
 			for id in 0..objects.len() {
 				if objects[id].ai.is_some() {
-					ai_take_turn(id, &mut objects, &tcod.fov, &mut game);
+					ai_take_turn(id, objects, &tcod.fov, game);
 				}
 			}
 		}
-
 	}
 }
-
 fn handle_keys(key: Key, tcod: &mut Tcod, game: &mut Game, objects: &mut Vec<Object>) -> PlayerAction {
 	use tcod::input::Key;
 	use tcod::input::KeyCode::*;
@@ -1070,4 +1084,36 @@ fn drop_item(inventory_id: usize, objects: &mut Vec<Object>, game: &mut Game) {
 	item.set_pos(objects[PLAYER].x, objects[PLAYER].y);
 	game.log.add(format!("You dropped a {}.", item.name), colors::YELLOW);
 	objects.push(item);
+}
+
+fn main_menu(tcod: &mut Tcod) {
+	let img = tcod::image::Image::from_file("menu_background.png")
+		.ok()
+		.expect("Background image not found");
+
+	while !tcod.root.window_closed() {
+		tcod::image::blit_2x(&img, (0, 0), (-1, -1), &mut tcod.root, (0, 0));
+
+		tcod.root.set_default_foreground(colors::LIGHT_YELLOW);
+		tcod.root.print_ex(SCREEN_WIDTH/2, SCREEN_HEIGHT/2 - 4,
+						   BackgroundFlag::None, TextAlignment::Center,
+						   "THE SPOOKIE POOPIES");
+		tcod.root.print_ex(SCREEN_WIDTH/2, SCREEN_HEIGHT - 2,
+			               BackgroundFlag::None, TextAlignment::Center,
+			               "By Jax");
+
+		let choices = &["Play a new game", "Continue last game", "Quit"];
+		let choice = menu("", choices, 24, &mut tcod.root);
+
+		match choice {
+			Some(0) => {
+				let (mut objects, mut game) = new_game(tcod);
+				play_game(&mut objects, &mut game, tcod);
+			}
+			Some(2) => {
+				break;
+			}
+			_ => {}
+		}
+	}
 }
