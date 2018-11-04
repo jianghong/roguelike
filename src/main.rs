@@ -39,7 +39,7 @@ const COLOR_LIGHT_GROUND: Color = Color { r: 200, g: 180, b: 50 };
 
 const ROOM_MAX_SIZE: i32 = 10;
 const ROOM_MIN_SIZE: i32 = 6;
-const MAX_ROOMS: i32 = 30;
+const MAX_ROOMS: i32 = 2;
 
 const MAX_ROOM_MONSTERS: i32 = 3;
 const MAX_ROOM_ITEMS: i32 = 2;
@@ -93,6 +93,7 @@ struct Game {
 	map: Map,
 	log: Messages,
 	inventory: Vec<Object>,
+	dungeon_level: u32,
 }
 
 fn main() {
@@ -122,12 +123,11 @@ fn new_game(tcod: &mut Tcod) -> (Vec<Object> , Game) {
 
 	// the list of objects with just the player
 	let mut objects = vec![player];
-	let (map, (x, y)) = make_map(&mut objects);
-	objects[PLAYER].set_pos(x, y);
 	let mut game = Game {
-		map: map,
+		map: make_map(&mut objects) ,
 		log: vec![],
 		inventory: vec![],
+		dungeon_level: 1,
 	};
 
 	initialise_fov(&game.map, tcod);
@@ -188,6 +188,19 @@ fn play_game(objects: &mut Vec<Object>, game: &mut Game, tcod: &mut Tcod) {
 		}
 	}
 }
+
+fn next_level(tcod: &mut Tcod, objects: &mut Vec<Object>, game: &mut Game) {
+	game.log.add("You take a moment to rest, and recover your strength.", colors::VIOLET);
+	let heal_hp = objects[PLAYER].fighter.map_or(0, |f| f.max_hp / 2);
+	objects[PLAYER].heal(heal_hp);
+
+    game.log.add("After a rare moment of peace, you descend deeper into \
+                  the heart of the dungeon...", colors::RED);
+    game.dungeon_level += 1;
+    game.map = make_map(objects);
+ 	initialise_fov(&game.map, tcod);
+}
+
 fn handle_keys(key: Key, tcod: &mut Tcod, game: &mut Game, objects: &mut Vec<Object>) -> PlayerAction {
 	use tcod::input::Key;
 	use tcod::input::KeyCode::*;
@@ -248,7 +261,18 @@ fn handle_keys(key: Key, tcod: &mut Tcod, game: &mut Game, objects: &mut Vec<Obj
 				drop_item(inventory_index, objects, game);
 			}
 			DidntTakeTurn
-		}		
+		}
+		(Key { printable: '<', .. }, true) => {
+			// go down stairs if player is on them
+			let player_on_stairs = objects.iter().any(|object| {
+				object.pos() == objects[PLAYER].pos() && object.name == "stairs"
+			});
+
+			if player_on_stairs {
+				next_level(tcod, objects, game);
+			}
+			DidntTakeTurn
+		}	
 		_ => DidntTakeTurn,
 	}
 }
@@ -332,6 +356,7 @@ struct Object {
 	fighter: Option<Fighter>,
 	ai: Option<Ai>,
 	item: Option<Item>,
+	always_visible: bool,
 }
 
 impl Object {
@@ -347,6 +372,7 @@ impl Object {
 			fighter: None,
 			ai: None,
 			item: None,
+			always_visible: false,
 		}
 	}
 
@@ -435,11 +461,11 @@ impl Tile {
 	}
 }
 
-fn make_map(objects: &mut Vec<Object>) -> (Map, (i32, i32)) {
+fn make_map(objects: &mut Vec<Object>) -> Map {
 	let mut map = vec![vec![Tile::wall(); MAP_HEIGHT as usize]; MAP_WIDTH as usize];
 	let mut rooms = vec![];
-
-	let mut starting_position = (0, 0);
+	assert_eq!(&objects[PLAYER] as *const _, &objects[0] as *const _);
+	objects.truncate(1);
 
 	for _ in 0..MAX_ROOMS {
 		let w = rand::thread_rng().gen_range(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1);
@@ -459,10 +485,9 @@ fn make_map(objects: &mut Vec<Object>) -> (Map, (i32, i32)) {
 
 			if rooms.is_empty() {
 				// this is the first valid room generated, start player here
-				starting_position = (new_x, new_y);
+				objects[PLAYER].set_pos(new_x, new_y)
 			} else {
 				// connect to previous room with a tunnel
-
 				let (prev_x, prev_y) = rooms[rooms.len() - 1].center();
 
 				// decide at random to either build v tunnel first
@@ -480,7 +505,12 @@ fn make_map(objects: &mut Vec<Object>) -> (Map, (i32, i32)) {
 		}
 	}
 
-	(map, starting_position)
+	// create stairs at center of the last room
+	let (last_room_x, last_room_y) = rooms[rooms.len() - 1].center();
+	let mut stairs = Object::new(last_room_x, last_room_y, '<', colors::WHITE, "stairs", false);
+	stairs.always_visible = true;
+	objects.push(stairs);
+	map
 }
 
 fn render_all(tcod: &mut Tcod, game: &mut Game, objects: &[Object], fov_recompute: bool) {
@@ -515,7 +545,8 @@ fn render_all(tcod: &mut Tcod, game: &mut Game, objects: &[Object], fov_recomput
 	}
 	// draw all objects in list
 	let mut to_draw: Vec<_> = objects.iter()
-	  .filter(|o| { tcod.fov.is_in_fov(o.x, o.y) })
+	  .filter(|o| { tcod.fov.is_in_fov(o.x, o.y) ||
+	  				(o.always_visible && game.map[o.x as usize][o.y as usize].explored) })
 	  .collect();
 	// sort so blocking objects come last and drawn on top of non blocking objects
 	to_draw.sort_by(|o1, o2| { o1.blocks.cmp(&o2.blocks) });
@@ -534,6 +565,8 @@ fn render_all(tcod: &mut Tcod, game: &mut Game, objects: &[Object], fov_recomput
 	let hp = objects[PLAYER].fighter.map_or(0, |f| f.hp);
 	let max_hp = objects[PLAYER].fighter.map_or(0, |f| f.max_hp);
 	render_bar(&mut tcod.panel, 1, 1, BAR_WIDTH, "HP", hp, max_hp, colors::LIGHT_RED, colors::DARKER_RED);
+	tcod.panel.print_ex(1, 3, BackgroundFlag::None, TextAlignment::Left,
+						format!("Dungeon level: {}", game.dungeon_level));
 
 	// display names of objects under mouse
 	tcod.panel.set_default_foreground(colors::LIGHT_GREY);
