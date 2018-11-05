@@ -290,7 +290,7 @@ Exp: {}
 Exp to level up: {}
 Max HP: {}
 Attack: {}
-Defense: {}", level, fighter.xp, level_up_xp, fighter.max_hp, fighter.power, fighter.defense);
+Defense: {}", level, fighter.xp, level_up_xp, fighter.max_hp, player.power(game), fighter.defense);
 				msgbox(&msg, CHARACTER_SCREEN_WIDTH, &mut tcod.root);
 			}
 
@@ -372,7 +372,7 @@ struct Fighter {
 	max_hp: i32,
 	hp: i32,
 	defense: i32,
-	power: i32,
+	base_power: i32,
 	on_death: DeathCallback,
 	xp: i32,
 }
@@ -381,6 +381,7 @@ struct Fighter {
 struct Equipment {
 	slot: Slot,
 	equipped: bool,
+	power_bonus: i32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -494,7 +495,7 @@ impl Object {
 
 	pub fn attack(&mut self, target: &mut Object, game: &mut Game) {
 		// simple formula for attack damage
-		let damage = self.fighter.map_or(0, |f| f.power) - target.fighter.map_or(0, |f| f.defense);
+		let damage = self.power(game) - target.fighter.map_or(0, |f| f.defense);
 		if damage > 0 {
 			game.log.add(format!("{} attacks {} for {} hp.", self.name, target.name, damage), colors::WHITE);
 			if let Some(xp) = target.take_damage(damage, game) {
@@ -544,6 +545,26 @@ impl Object {
 		} else {
 			log.add(format!("Can't dequip {:?} because not an equipment.", self), colors::RED);
 		}		
+	}
+
+	pub fn power(&self, game: &Game) -> i32 {
+		let base_power = self.fighter.map_or(0, |f| f.base_power);
+		let bonus = self.get_all_equipped(game).iter().fold(0, |sum, e| sum + e.power_bonus);
+		base_power + bonus
+	}
+
+	pub fn get_all_equipped(&self, game: &Game) -> Vec<Equipment> {
+		if self.name == "Player" {
+			game.inventory
+				.iter()
+				.filter(|item| {
+					item.equipment.map_or(false, |e| e.equipped)
+				})
+				.map(|item| item.equipment.unwrap())
+				.collect()
+		} else {
+			vec![]
+		}
 	}
 }
 
@@ -841,7 +862,7 @@ fn create_player() -> Object {
 		max_hp: 100,
 		hp: 100,
 		defense: 1,
-		power: 4,
+		base_power: 4,
 		on_death: DeathCallback::Player,
 		xp: 0,
 	});
@@ -868,7 +889,7 @@ fn create_monster(x: i32, y: i32, level: u32) -> Object {
 				max_hp: 20,
 				hp: 20,
 				defense: 0,
-				power: 4,
+				base_power: 4,
 				on_death: DeathCallback::Monster,
 				xp: 35,
 			});
@@ -881,7 +902,7 @@ fn create_monster(x: i32, y: i32, level: u32) -> Object {
 				max_hp: 30,
 				hp: 30,
 				defense: 2,
-				power: 8,
+				base_power: 8,
 				on_death: DeathCallback::Monster,
 				xp: 100,
 			});
@@ -1256,7 +1277,7 @@ fn create_item(x: i32, y: i32) -> Object {
 		Equipment => {
 			let mut object = Object::new(x, y, '/', colors::SKY, "sword", false);
 			object.item = Some(Equipment);
-			object.equipment = Some(::Equipment{equipped: false, slot: Slot::RightHand});
+			object.equipment = Some(::Equipment{equipped: false, slot: Slot::RightHand, power_bonus: 3});
 			object
 		}
 	};
@@ -1409,7 +1430,7 @@ fn level_up(objects: &mut [Object], game: &mut Game, tcod: &mut Tcod) {
 		    choice = menu(
 		        "Level up! Choose a stat to raise:\n",
 		        &[format!("Constitution (+20 HP, from {})", fighter.max_hp),
-		          format!("Strength (+1 attack, from {})", fighter.power),
+		          format!("Strength (+1 attack, from {})", fighter.base_power),
 		          format!("Agility (+1 defense, from {})", fighter.defense)],
 		        LEVEL_SCREEN_WIDTH, &mut tcod.root);
 		};
@@ -1420,7 +1441,7 @@ fn level_up(objects: &mut [Object], game: &mut Game, tcod: &mut Tcod) {
 				fighter.hp += 20;
 			}
 			1 => {
-				fighter.power += 1;
+				fighter.base_power += 1;
 			}
 			2 => {
 				fighter.defense += 1;
